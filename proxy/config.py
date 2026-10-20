@@ -11,6 +11,7 @@ from urllib.request import Request
 
 from .balancer import balancer
 from .utils import build_github_opener
+from .listeners import DEFAULT_HOSTS
 
 log = logging.getLogger('tg-mtproto-proxy')
 
@@ -62,7 +63,9 @@ _CFPROXY_MIN_VALID_DOMAINS = 3
 @dataclass
 class ProxyConfig:
     port: int = 1443
-    host: str = '127.0.0.1'
+    host: str = DEFAULT_HOSTS
+    public_host: str = ''
+    ipv6: bool = False
     secret: str = field(default_factory=lambda: os.urandom(16).hex())
     dc_redirects: Dict[int, str] = field(default_factory=lambda: {2: '149.154.167.220', 4: '149.154.167.220'})
     buffer_size: int = 256 * 1024
@@ -204,7 +207,7 @@ def start_cfproxy_domain_refresh() -> None:
     threading.Thread(target=_loop, daemon=True, name='cfproxy-domains-refresh').start()
 
 
-def parse_dc_ip_list(dc_ip_list: List[str]) -> Dict[int, str]:
+def parse_dc_ip_list(dc_ip_list: List[str], *, ipv6: bool = False) -> Dict[int, str]:
     dc_redirects: Dict[int, str] = {}
     for entry in dc_ip_list:
         if ':' not in entry:
@@ -214,9 +217,12 @@ def parse_dc_ip_list(dc_ip_list: List[str]) -> Dict[int, str]:
             err.kind = "format"
             raise err
         dc_s, ip_s = entry.split(':', 1)
+        if ip_s.startswith('[') and ip_s.endswith(']'):
+            ip_s = ip_s[1:-1]
         try:
             dc_n = int(dc_s)
-            _socket.inet_pton(_socket.AF_INET, ip_s)
+            family = _socket.AF_INET6 if ipv6 and ':' in ip_s else _socket.AF_INET
+            _socket.inet_pton(family, ip_s)
         except (ValueError, OSError):
             err = ValueError(f"Invalid --dc-ip {entry!r}")
             err.entry = entry

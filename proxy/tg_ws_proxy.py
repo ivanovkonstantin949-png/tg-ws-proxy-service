@@ -8,6 +8,10 @@ import struct
 import asyncio
 import hashlib
 import argparse
+import json
+import math
+import errno
+import ipaddress
 import logging
 import socket as _socket
 
@@ -36,6 +40,7 @@ from .cf_h2 import CfH2Pool
 from .network_debug import log_ws_flow
 from .event_loop import install_self_pipe_guard
 from ._aes import Cipher, algorithms, modes
+from .listeners import DEFAULT_HOSTS, parse_hosts, proxy_links, format_link_host
 
 
 log = logging.getLogger('tg-mtproto-proxy')
@@ -271,7 +276,7 @@ async def _handle_client(reader, writer, secret: bytes):
     stats.connections_total += 1
     stats.connections_active += 1
     peer = writer.get_extra_info('peername')
-    label = f"{peer[0]}:{peer[1]}" if peer else "?"
+    label = f"{format_link_host(peer[0])}:{peer[1]}" if peer else "?"
 
     set_sock_opts(writer.transport, proxy_config.buffer_size)
 
@@ -383,7 +388,33 @@ _server_stop_event = None
 _client_tasks: Set[asyncio.Task] = set()
 
 
-async def _run(stop_event: Optional[asyncio.Event] = None):
+async def start_listener(client_cb, hosts, port):
+    hosts = parse_hosts(hosts)
+    # asyncio creates one socket per address, with IPV6_V6ONLY=1, so the
+    # IPv4 wildcard cannot collide with the IPv6 wildcard on Windows/macOS.
+    # Port 0 is used by embedders/tests: keep the same ephemeral port on both.
+    if port == 0:
+        probe = await asyncio.start_server(client_cb, hosts[0], 0, start_serving=False)
+        port = probe.sockets[0].getsockname()[1]
+        probe.close()
+        await probe.wait_closed()
+    server = await asyncio.start_server(client_cb, hosts, port)
+    # CPython can silently skip an address on EADDRNOTAVAIL. A configured
+    # literal must actually be bound; otherwise roll back the entire listener.
+    bound = {sock.getsockname()[0].split('%')[0] for sock in server.sockets}
+    for host in hosts:
+        try:
+            address = str(ipaddress.ip_address(host)).split('%')[0]
+        except ValueError:
+            continue  # DNS names are resolved by asyncio.
+        if address not in bound:
+            server.close()
+            await server.wait_closed()
+            raise OSError(errno.EADDRNOTAVAIL, 'a configured listen address is unavailable')
+    return server
+
+
+async def _run(stop_event: Optional[asyncio.Event] = None, on_ready=None):
     global _server_instance, _server_stop_event, cf_h2_pool
     install_self_pipe_guard(asyncio.get_running_loop())
     _server_stop_event = stop_event
@@ -397,7 +428,7 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     user_cf_domains = proxy_config.cfproxy_user_domains
     if user_cf_domains:
         balancer.update_domains_list(user_cf_domains)
-    else:
+    elif proxy_config.fallback_cfproxy:
         start_cfproxy_domain_refresh()
 
     secret_bytes = bytes.fromhex(proxy_config.secret)
@@ -424,7 +455,7 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
         _client_tasks.add(task)
         task.add_done_callback(_client_tasks.discard)
 
-    server = await asyncio.start_server(client_cb, proxy_config.host, proxy_config.port)
+    server = await start_listener(client_cb, proxy_config.host, proxy_config.port)
     _server_instance = server
 
     for sock in server.sockets:
@@ -433,22 +464,14 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
         except (OSError, AttributeError):
             pass
 
-    link_host = get_link_host(proxy_config.host)
     ftls = proxy_config.fake_tls_domain
-    dd_link = (f"tg://proxy?server={link_host}"
-               f"&port={proxy_config.port}"
-               f"&secret=dd{proxy_config.secret}")
-    ee_link = ""
-    if ftls:
-        domain_hex = ftls.encode('ascii').hex()
-        ee_link = (f"tg://proxy?server={link_host}"
-                   f"&port={proxy_config.port}"
-                   f"&secret=ee{proxy_config.secret}{domain_hex}")
+    listen_port = server.sockets[0].getsockname()[1]
 
     log.info("=" * 60)
     log.info("  Telegram MTProto WS Bridge Proxy")
-    log.info("  Listening on   %s:%d", proxy_config.host, proxy_config.port)
-    log.info("  Secret:        %s", proxy_config.secret)
+    for sock in server.sockets:
+        address = sock.getsockname()
+        log.info("  Listening on   %s:%d", format_link_host(address[0]), address[1])
     if ftls:
         log.info("  Fake TLS:      %s", ftls)
     log.info("  Target DC IPs:")
@@ -467,10 +490,9 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
         log.info("  No secure:     enabled (port 80 for CF proxy/worker)")
     log.info("=" * 60)
     log.info("  Connect:")
-    if ftls:
-        log.info("    %s", ee_link)
-    else:
-        log.info("    %s", dd_link)
+    for link in proxy_links(proxy_config.host, listen_port, proxy_config.secret,
+                            proxy_config.public_host, ftls):
+        log.info("    %s", link, extra={'proxy_link': True})
     log.info("=" * 60)
 
     async def log_stats():
@@ -511,6 +533,8 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
 
     serve_task = stop_task = watchdog_task = None
     try:
+        if on_ready is not None:
+            on_ready()
         while True:
             serve_task = asyncio.create_task(server.serve_forever())
             stop_task = (asyncio.create_task(stop_event.wait())
@@ -520,7 +544,7 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
                 while True:
                     await asyncio.sleep(LISTENER_CHECK_INTERVAL)
                     socks = server.sockets
-                    if not socks or all(s.fileno() < 0 for s in socks):
+                    if not socks or any(s.fileno() < 0 for s in socks):
                         return
 
             watchdog_task = asyncio.create_task(_listener_watchdog())
@@ -547,11 +571,11 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
                 pass
             await asyncio.sleep(LISTENER_RESTART_DELAY)
             try:
-                server = await asyncio.start_server(
-                    client_cb, proxy_config.host, proxy_config.port)
+                server = await start_listener(
+                    client_cb, proxy_config.host, listen_port)
             except OSError as exc:
                 log.error("Failed to restart server: %s", repr(exc))
-                break
+                raise
             _server_instance = server
             for sock in server.sockets:
                 try:
@@ -595,13 +619,20 @@ def run_proxy(stop_event: Optional[asyncio.Event] = None):
     asyncio.run(_run(stop_event,))
 
 
-def main():
+def configure(argv=None):
     ap = argparse.ArgumentParser(
         description='Telegram MTProto WebSocket Bridge Proxy')
     ap.add_argument('--port', type=int, default=1443,
                     help='Listen port (default 1443)')
-    ap.add_argument('--host', type=str, default='127.0.0.1',
-                    help='Listen host (default 127.0.0.1)')
+    ap.add_argument('--config', metavar='PATH', help='JSON configuration; CLI overrides its values')
+    ap.add_argument('--host', default=DEFAULT_HOSTS,
+                    help='Comma-separated listen hosts (default 0.0.0.0,::)')
+    ap.add_argument('--public-host', default='',
+                    help='Extra advertised IP/DNS name(s) for NAT; never used for bind')
+    ap.add_argument('--ipv6', action='store_true',
+                    help='Allow explicit IPv6 --dc-ip targets (IPv4 defaults unchanged)')
+    ap.add_argument('--print-links', action='store_true',
+                    help='Print links to stdout and exit without starting the proxy')
     ap.add_argument('--secret', type=str, default=None,
                     help='MTProto proxy secret (32 hex chars). '
                          'Auto-generated if not provided.')
@@ -649,7 +680,62 @@ def main():
     ap.add_argument('--proxy-protocol', action='store_true',
                     help='Accept PROXY protocol v1 header '
                          '(for use behind nginx/haproxy with proxy_protocol on)')
-    args = ap.parse_args()
+    # Read only the config path first; parse all remaining options exactly once
+    # so append options replace (rather than append to) configured values.
+    bootstrap = argparse.ArgumentParser(add_help=False)
+    bootstrap.add_argument('--config')
+    preliminary, _ = bootstrap.parse_known_args(argv)
+    if preliminary.config:
+        try:
+            with open(preliminary.config, encoding='utf-8-sig') as stream:
+                defaults = json.load(stream)
+        except (OSError, ValueError):
+            ap.error('cannot read config: expected a readable JSON object')
+        actions = {a.dest: a for a in ap._actions if a.dest not in
+                   ('help', 'config', 'print_links')}
+        if not isinstance(defaults, dict) or defaults.keys() - actions.keys():
+            ap.error('config must be an object containing known option names')
+        for key, value in defaults.items():
+            action = actions[key]
+            if key == 'host':
+                try:
+                    value = ','.join(parse_hosts(value))
+                except ValueError as exc:
+                    ap.error(str(exc))
+            elif isinstance(action, argparse._StoreTrueAction):
+                if not isinstance(value, bool):
+                    ap.error('config boolean option has the wrong type')
+            elif isinstance(action, argparse._AppendAction):
+                if not isinstance(value, list) or any(not isinstance(v, str) for v in value):
+                    ap.error('config repeatable option must be a list of strings')
+                # An explicitly supplied CLI option wins over the JSON list.
+                option = action.option_strings[0]
+                if any(v == option or v.startswith(option + '=')
+                       for v in (argv if argv is not None else sys.argv[1:])):
+                    continue
+            elif action.type in (int, float):
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    ap.error('config numeric option has the wrong type')
+                if action.type is int and not isinstance(value, int):
+                    ap.error('config integer option has the wrong type')
+            elif not isinstance(value, str):
+                ap.error('config text option has the wrong type')
+            ap.set_defaults(**{key: value})
+    args = ap.parse_args(argv)
+    try:
+        args.host = ','.join(parse_hosts(args.host))
+        if args.public_host:
+            args.public_host = ','.join(parse_hosts(args.public_host))
+    except ValueError as exc:
+        ap.error(str(exc))
+    if not 1 <= args.port <= 65535:
+        ap.error('port must be between 1 and 65535')
+    if not math.isfinite(args.log_max_mb) or args.log_max_mb <= 0:
+        ap.error('log-max-mb must be a positive finite number')
+    try:
+        args.fake_tls_domain.encode('ascii')
+    except UnicodeEncodeError:
+        ap.error('fake-tls-domain must use an ASCII/punycode name')
 
     if args.dc_ip is None:
         args.dc_ip = [
@@ -660,27 +746,29 @@ def main():
         args.dc_ip = []
 
     try:
-        dc_redirects = parse_dc_ip_list(args.dc_ip)
+        dc_redirects = parse_dc_ip_list(args.dc_ip, ipv6=args.ipv6)
     except ValueError as e:
         log.error(str(e))
         sys.exit(1)
 
-    if args.secret:
+    if args.secret is not None:
         secret_hex = args.secret.strip()
         if len(secret_hex) != 32:
             log.error("Secret must be exactly 32 hex characters")
             sys.exit(1)
         try:
-            bytes.fromhex(secret_hex)
+            if len(bytes.fromhex(secret_hex)) != 16:
+                raise ValueError
         except ValueError:
             log.error("Secret must be valid hex")
             sys.exit(1)
     else:
         secret_hex = os.urandom(16).hex()
-        log.info("Generated secret: %s", secret_hex)
 
     proxy_config.port = args.port
     proxy_config.host = args.host
+    proxy_config.public_host = args.public_host
+    proxy_config.ipv6 = args.ipv6
     proxy_config.secret = secret_hex
     proxy_config.dc_redirects = dc_redirects
     proxy_config.buffer_size = max(4, args.buf_kb) * 1024
@@ -693,6 +781,10 @@ def main():
     proxy_config.fake_tls_domain = args.fake_tls_domain.strip()
     proxy_config.proxy_protocol = args.proxy_protocol
     proxy_config.force_test_dc = args.force_test_dc
+    return args
+
+
+def setup_logging(args):
 
     log_level = logging.DEBUG if args.verbose else logging.INFO
     log_fmt = logging.Formatter('%(asctime)s  %(levelname)-5s  %(message)s',
@@ -702,7 +794,9 @@ def main():
 
     console = logging.StreamHandler()
     console.setFormatter(log_fmt)
-    console.addFilter(DomainCensorFilter())
+    # Domain censoring would corrupt advertised DNS names in Telegram links.
+    console.addFilter(lambda record: getattr(record, 'proxy_link', False)
+                      or DomainCensorFilter().filter(record))
     root.addHandler(console)
 
     if args.log_file:
@@ -712,6 +806,7 @@ def main():
             log_max_mb=args.log_max_mb,
             backups=args.log_backups,
         )
+        fh.addFilter(lambda record: not getattr(record, 'proxy_link', False))
         fh.addFilter(DomainCensorFilter())
         root.addHandler(fh)
 
@@ -719,6 +814,16 @@ def main():
     logging.getLogger('httpx').setLevel(logging.WARNING)
     logging.getLogger('httpcore').setLevel(logging.WARNING)
 
+
+def main(argv=None):
+    args = configure(argv)
+    if args.print_links:
+        for link in proxy_links(proxy_config.host, proxy_config.port,
+                                proxy_config.secret, proxy_config.public_host,
+                                proxy_config.fake_tls_domain):
+            print(link)
+        return
+    setup_logging(args)
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:

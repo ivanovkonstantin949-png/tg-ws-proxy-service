@@ -1,0 +1,60 @@
+name: Build Windows service MSI
+'on':
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-msi:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      DOTNET_ROLL_FORWARD: Major
+      PYTHONPATH: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: x64
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Install runtime and build dependencies
+        run: >-
+          python -m pip install -r packaging/requirements-service.txt
+          -r packaging/requirements-test.txt pyinstaller==6.16.0
+      - name: Compile and test
+        run: |
+          python -m compileall -q proxy windows_service.py
+          python -m pytest tests -q
+      - name: Build single AMD64 executable
+        run: |
+          python -m PyInstaller --noconfirm --clean packaging/service.spec
+          if (!(Test-Path dist/tg-ws-proxy.exe)) { throw 'EXE missing' }
+      - name: Install WiX v4 and extensions
+        run: |
+          dotnet tool install wix --version 4.0.6 --tool-path .wix
+          ./.wix/wix.exe extension add -g WixToolset.Firewall.wixext/4.0.6
+          ./.wix/wix.exe extension add -g WixToolset.Util.wixext/4.0.6
+      - name: Build MSI
+        run: >-
+          ./.wix/wix.exe build packaging/msi/Package.wxs -arch x64
+          -ext WixToolset.Firewall.wixext -ext WixToolset.Util.wixext
+          -d SourceDir=${{ github.workspace }} -o dist/tg-ws-proxy-x64.msi
+      - name: Exercise MSI install, service, recovery and uninstall
+        run: ./tests/windows-msi-smoke.ps1 -MsiPath dist/tg-ws-proxy-x64.msi
+      - name: Upload MSI and executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: tg-ws-proxy-x64.msi
+          path: |
+            dist/tg-ws-proxy-x64.msi
+            dist/tg-ws-proxy.exe
+          if-no-files-found: error
+      - name: Upload installer diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msi-diagnostics
+          path: dist/msi-*.log
+          if-no-files-found: ignore

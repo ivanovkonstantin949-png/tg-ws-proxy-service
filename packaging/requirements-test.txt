@@ -1,0 +1,8 @@
+pytest==9.1.1
+PyYAML==6.0.3
+psutil==7.0.0
+pyperclip==1.9.0
+# Two upstream Linux updater tests import the desktop entry point.
+# Installed only for testing, excluded from the headless service executable.
+customtkinter==5.2.2
+Pillow==12.1.0

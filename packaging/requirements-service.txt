@@ -1,0 +1,5 @@
+# Headless runtime: keep aligned with pyproject.toml; no tray/GUI dependencies.
+certifi==2026.10.19
+cryptography==46.0.5
+httpx[http2]==0.28.1
+pywin32==311; sys_platform == 'win32'
