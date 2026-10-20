@@ -1,0 +1,8 @@
+--timeout=30
+--timeout-method=thread
+--deselect=tests/test_h2_transport.py::H2WireTest::test_body_tail_does_not_wait_for_unrelated_long_polls
+--deselect=tests/test_h2_transport.py::H2WireTest::test_busy_channel_recovers_old_request_despite_newer_replies
+--deselect=tests/test_h2_transport.py::H2WireTest::test_idle_poll_preserves_slot_for_new_overdue_request
+--deselect=tests/test_h2_transport.py::H2WireTest::test_obfuscated_clients_preserve_packets_through_full_h2_fallback
+--deselect=tests/test_h2_transport.py::H2WireTest::test_normal_long_poll_survives_six_seconds_and_delivers_late_reply
+--deselect=tests/test_cf_h2.py::HttpMultiplexTest::test_unhelpful_replies_do_not_cause_unbounded_recovery

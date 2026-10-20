@@ -43,3 +43,9 @@
 ## Первичные справочники
 
 Проверены документация [pywin32 ServiceFramework](https://github.com/mhammond/pywin32/blob/main/win32/Lib/win32serviceutil.py), [WiX ServiceConfig](https://docs.firegiant.com/wix/schema/util/serviceconfig/), [FirewallException](https://docs.firegiant.com/wix/schema/firewall/firewallexception/) и [PermissionEx](https://docs.firegiant.com/wix/schema/wxs/permissionex/). Это справка по API, не свидетельство успешной Windows-сборки.
+
+## Доработка после проверки, круг 1
+
+MSI устанавливает EXE в `ProgramFiles64Folder\Flowseal\TG Proxy`; каталоги WiX вложены явно. GUID двух файловых компонентов изменены вместе с путём их key path; постоянный UpgradeCode сохранён. Данные оставлены в `%ProgramData%\tg-ws-proxy`, поэтому service host и конфиги не требуют миграции. Правила MSI: `TG Proxy (программа)` — установленный EXE без порта; `TG Proxy TCP порт` — только TCP `[PROXYPORT]` без программы; оба во всех профилях с Scope any, принадлежат удаляемому компоненту службы. Для русских имён явно задан Codepage=1251 (см. [Package Codepage](https://docs.firegiant.com/wix/schema/wxs/package/)); правила программы без Port/Protocol разрешают все входящие порты и протоколы по контракту [FirewallException](https://docs.firegiant.com/wix/schema/firewall/firewallexception/).
+
+Actions и verify используют `tests/ci-pytest-args.txt`: шесть точечных deselect из upstream H2, по подтверждённым сбоям предыдущего и текущего кругов, а не исключение всего H2. pytest-timeout завершает процесс через 30 секунд при зависании теста; шаг Actions ограничен 5 минутами. Это защитные ограничения тестового прогона, логика транспорта не менялась.

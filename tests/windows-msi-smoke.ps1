@@ -3,7 +3,8 @@ $ErrorActionPreference = 'Stop'
 $msi = (Resolve-Path $MsiPath).Path
 $dist = Split-Path $msi
 $data = Join-Path $env:ProgramData 'tg-ws-proxy'
-$exe = Join-Path $env:ProgramFiles 'tg-ws-proxy\tg-ws-proxy.exe'
+$exe = Join-Path $env:ProgramFiles 'Flowseal\TG Proxy\tg-ws-proxy.exe'
+$ruleNames = @('TG Proxy (программа)', 'TG Proxy TCP порт')
 $config = Join-Path $data 'config.json'
 $port = 21443
 if ((Test-Path $data) -or (Get-Service TgWsProxy -ErrorAction SilentlyContinue)) {
@@ -29,6 +30,30 @@ function Assert-Listeners {
         } finally { $client.Dispose() }
     }
 }
+function Assert-Firewall {
+    foreach ($name in $ruleNames) {
+        $rules = @(Get-NetFirewallRule -DisplayName $name)
+        if ($rules.Count -ne 1) { throw "Expected one firewall rule: $name" }
+        $rule = $rules[0]
+        if ($rule.Enabled -ne 'True' -or $rule.Direction -ne 'Inbound' -or
+            $rule.Action -ne 'Allow' -or $rule.Profile -ne 'Any') {
+            throw "Firewall rule must allow inbound traffic on all profiles: $name"
+        }
+        if (($rule | Get-NetFirewallAddressFilter).RemoteAddress -ne 'Any') {
+            throw "Firewall remote scope must be Any: $name"
+        }
+        $application = $rule | Get-NetFirewallApplicationFilter
+        $ports = $rule | Get-NetFirewallPortFilter
+        if ($name -eq 'TG Proxy (программа)') {
+            if ($application.Program -ne $exe -or $ports.LocalPort -ne 'Any') {
+                throw 'Program rule must match the installed EXE without a port restriction'
+            }
+        } elseif ($application.Program -ne 'Any' -or $ports.LocalPort -ne "$port" -or
+                  $ports.Protocol -notin @('TCP', '6')) {
+            throw 'Port rule must match TCP PROXYPORT without an application restriction'
+        }
+    }
+}
 
 # Existing config deliberately disables all eager upstream work in this test.
 # The random runtime secret is never printed or included in build artifacts.
@@ -43,8 +68,7 @@ try {
     if (!(Test-Path $exe)) { throw 'Installed EXE missing' }
     $service = Get-CimInstance Win32_Service -Filter "Name='TgWsProxy'"
     if ($service.StartMode -ne 'Auto') { throw 'Service is not automatic' }
-    $rule = Get-NetFirewallRule -DisplayName 'tg-ws-proxy TCP'
-    if (($rule | Get-NetFirewallPortFilter).LocalPort -ne "$port") { throw 'Firewall port mismatch' }
+    Assert-Firewall
     if (!(Test-Path (Join-Path $data 'log.txt'))) { throw 'Service log missing' }
     if ((Get-FileHash $config).Hash -ne $originalHash) { throw 'Install overwrote config' }
     $secret = (Get-Content $config -Raw | ConvertFrom-Json).secret
@@ -68,7 +92,11 @@ try {
     Install-Msi '/x' 'msi-uninstall.log'
 }
 if (Get-Service TgWsProxy -ErrorAction SilentlyContinue) { throw 'Service survived uninstall' }
-if (Get-NetFirewallRule -DisplayName 'tg-ws-proxy TCP' -ErrorAction SilentlyContinue) { throw 'Firewall rule survived uninstall' }
+foreach ($name in $ruleNames) {
+    if (Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue) {
+        throw "Firewall rule survived uninstall: $name"
+    }
+}
 if (Test-Path $exe) { throw 'EXE survived uninstall' }
 if ((Get-FileHash $config).Hash -ne $originalHash) { throw 'Uninstall overwrote config' }
 
@@ -90,4 +118,4 @@ try {
 }
 if (Get-Service TgWsProxy -ErrorAction SilentlyContinue) { throw 'Standalone service survived removal' }
 Remove-Item $data -Recurse -Force
-Write-Output 'PASS: MSI install/start/stop/recovery/uninstall, dual TCP bind, firewall, config preservation; standalone lifecycle'
+Write-Output 'PASS: MSI install/start/stop/recovery/uninstall, Flowseal\TG Proxy path, dual TCP bind, both firewall rules, config preservation; standalone lifecycle'

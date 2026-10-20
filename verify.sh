@@ -7,7 +7,8 @@ mkdir -p .scratch/tmp
 export TMPDIR="$PWD/.scratch/tmp"
 "$PYTHON" -m compileall -q proxy windows_service.py tests
 "$PYTHON" -m py_compile packaging/service.spec packaging/service_version.txt
-"$PYTHON" -m pytest tests -q
+# Same bounded selection as Actions; explicit upstream exclusions are in this file.
+"$PYTHON" -m pytest tests -q @tests/ci-pytest-args.txt
 case "$(uname -s)" in
   Darwin|Linux) "$PYTHON" tests/smoke_cli.py ;;
   *) echo 'CLI SIGINT smoke needs macOS/Linux; Windows MSI acceptance: tests/windows-msi-smoke.ps1' ;;

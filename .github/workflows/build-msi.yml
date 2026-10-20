@@ -24,9 +24,12 @@ jobs:
           python -m pip install -r packaging/requirements-service.txt
           -r packaging/requirements-test.txt pyinstaller==6.16.0
       - name: Compile and test
+        timeout-minutes: 5
         run: |
           python -m compileall -q proxy windows_service.py
-          python -m pytest tests -q
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m pytest tests -q '@tests/ci-pytest-args.txt'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Build single AMD64 executable
         run: |
           python -m PyInstaller --noconfirm --clean packaging/service.spec

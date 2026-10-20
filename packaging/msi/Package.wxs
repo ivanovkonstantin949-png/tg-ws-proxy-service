@@ -4,7 +4,7 @@
   <!-- Keep UpgradeCode permanent. Increment Version for each released upgrade. -->
   <Package Name="tg-ws-proxy" Manufacturer="Flowseal (local service extension)"
            Version="1.11.3" UpgradeCode="E83E6106-BDC7-47E2-9655-4249DDD7E664"
-           Scope="perMachine" InstallerVersion="500" Compressed="yes">
+           Scope="perMachine" InstallerVersion="500" Compressed="yes" Codepage="1251">
     <MajorUpgrade DowngradeErrorMessage="A newer tg-ws-proxy version is already installed."
                   Schedule="afterInstallInitialize" />
     <MediaTemplate EmbedCab="yes" />
@@ -12,28 +12,33 @@
     <Launch Condition='PROXYPORT &gt;= 1 AND PROXYPORT &lt;= 65535'
             Message="PROXYPORT must be an integer between 1 and 65535." />
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="tg-ws-proxy">
-        <Component Id="ProxyService" Guid="405D7704-294D-4C14-B3F8-90207C1F67A5" Bitness="always64">
-          <File Id="ProxyExe" Source="$(var.SourceDir)\dist\tg-ws-proxy.exe" KeyPath="yes" />
-          <ServiceInstall Id="InstallProxy" Name="TgWsProxy"
-                          DisplayName="Telegram WebSocket Proxy (Flowseal)"
-                          Description="MTProto WebSocket bridge with IPv4 and IPv6 listeners"
-                          Type="ownProcess" Start="auto" ErrorControl="normal"
-                          Account="LocalSystem" Arguments="--service --initial-port [PROXYPORT]" Vital="yes">
-            <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart"
-                                ThirdFailureActionType="restart" RestartServiceDelayInSeconds="5"
-                                ResetPeriodInDays="1" />
-          </ServiceInstall>
-          <ServiceControl Id="ControlProxy" Name="TgWsProxy" Start="install"
-                          Stop="both" Remove="uninstall" Wait="yes" />
-          <firewall:FirewallException Id="ProxyFirewall" Name="tg-ws-proxy TCP"
-              Program="[#ProxyExe]" Port="[PROXYPORT]" Protocol="tcp" Scope="any"
-              Profile="all" IgnoreFailure="no" />
-        </Component>
-        <Component Id="LicenseFile" Guid="B01BDF77-37E6-4477-8127-C73C86D41AF8" Bitness="always64">
-          <File Source="$(var.SourceDir)\LICENSE" KeyPath="yes" />
-          <File Source="$(var.SourceDir)\README-RU.md" />
-        </Component>
+      <Directory Id="FlowsealFolder" Name="Flowseal">
+        <Directory Id="INSTALLFOLDER" Name="TG Proxy">
+          <Component Id="ProxyService" Guid="29E49E85-6410-4969-A387-4B4F3BDDB222" Bitness="always64">
+            <File Id="ProxyExe" Source="$(var.SourceDir)\dist\tg-ws-proxy.exe" KeyPath="yes" />
+            <ServiceInstall Id="InstallProxy" Name="TgWsProxy"
+                            DisplayName="Telegram WebSocket Proxy (Flowseal)"
+                            Description="MTProto WebSocket bridge with IPv4 and IPv6 listeners"
+                            Type="ownProcess" Start="auto" ErrorControl="normal"
+                            Account="LocalSystem" Arguments="--service --initial-port [PROXYPORT]" Vital="yes">
+              <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart"
+                                  ThirdFailureActionType="restart" RestartServiceDelayInSeconds="5"
+                                  ResetPeriodInDays="1" />
+            </ServiceInstall>
+            <ServiceControl Id="ControlProxy" Name="TgWsProxy" Start="install"
+                            Stop="both" Remove="uninstall" Wait="yes" />
+            <firewall:FirewallException Id="ProxyProgramFirewall" Name="TG Proxy (программа)"
+                Program="[#ProxyExe]" Scope="any"
+                Profile="all" IgnoreFailure="no" />
+            <firewall:FirewallException Id="ProxyPortFirewall" Name="TG Proxy TCP порт"
+                Port="[PROXYPORT]" Protocol="tcp" Scope="any"
+                Profile="all" IgnoreFailure="no" />
+          </Component>
+          <Component Id="LicenseFile" Guid="13F81A1E-1EAD-401C-A9F1-597AB5C520D3" Bitness="always64">
+            <File Source="$(var.SourceDir)\LICENSE" KeyPath="yes" />
+            <File Source="$(var.SourceDir)\README-RU.md" />
+          </Component>
+        </Directory>
       </Directory>
     </StandardDirectory>
     <StandardDirectory Id="CommonAppDataFolder">
