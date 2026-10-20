@@ -163,7 +163,7 @@ def main():
                 try:
                     win32service.ChangeServiceConfig2(
                         service, win32service.SERVICE_CONFIG_FAILURE_ACTIONS,
-                        {'ResetPeriod': 86400,
+                        {'ResetPeriod': 86400, 'RebootMsg': '', 'Command': '',
                          'Actions': [(win32service.SC_ACTION_RESTART, 5000)] * 3})
                 finally:
                     win32service.CloseServiceHandle(service)
