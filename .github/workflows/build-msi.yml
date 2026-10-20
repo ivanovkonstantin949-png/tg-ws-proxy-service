@@ -1,6 +1,8 @@
 name: Build Windows service MSI
 'on':
   workflow_dispatch:
+  push:
+    branches: [msi-build]
 permissions:
   contents: read
 jobs:
