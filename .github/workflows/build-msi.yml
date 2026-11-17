@@ -4,7 +4,7 @@ name: Build Windows service MSI
   push:
     branches: [msi-build]
 permissions:
-  contents: read
+  contents: write
 jobs:
   build-msi:
     runs-on: windows-latest
@@ -48,6 +48,20 @@ jobs:
           -d SourceDir=${{ github.workspace }} -o dist/tg-ws-proxy-x64.msi
       - name: Exercise MSI install, service, recovery and uninstall
         run: ./tests/windows-msi-smoke.ps1 -MsiPath dist/tg-ws-proxy-x64.msi
+      - name: Publish MSI to dist-build branch
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'pub'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item dist/tg-ws-proxy-x64.msi, dist/tg-ws-proxy.exe $out
+          Set-Location $out
+          git init -q -b dist-build
+          git config user.name 'build'
+          git config user.email 'build@users.noreply.github.com'
+          git add tg-ws-proxy-x64.msi tg-ws-proxy.exe
+          git commit -q -m "MSI ${{ github.sha }}"
+          $url = "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          git push -f $url dist-build
       - name: Upload MSI and executable
         uses: actions/upload-artifact@v4
         with:
