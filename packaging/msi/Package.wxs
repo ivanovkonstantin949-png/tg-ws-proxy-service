@@ -3,7 +3,7 @@
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <!-- Keep UpgradeCode permanent. Increment Version for each released upgrade. -->
   <Package Name="tg-ws-proxy" Manufacturer="Flowseal (local service extension)"
-           Version="1.11.3" UpgradeCode="E83E6106-BDC7-47E2-9655-4249DDD7E664"
+           Version="1.11.4" UpgradeCode="E83E6106-BDC7-47E2-9655-4249DDD7E664"
            Scope="perMachine" InstallerVersion="500" Compressed="yes" Codepage="1251">
     <MajorUpgrade DowngradeErrorMessage="A newer tg-ws-proxy version is already installed."
                   Schedule="afterInstallInitialize" />

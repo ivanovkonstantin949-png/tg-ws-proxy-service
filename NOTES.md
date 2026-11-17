@@ -38,7 +38,7 @@
 - Исходящие IPv4 redirects сохранены. Опциональный `--ipv6` / `ipv6: true` разрешает явно заданный IPv6 в dc_ip; нет догадок об IPv6-адресах DC и автоматического перевода CF/TCP маршрутов на IPv6. DNS-based transports сохраняют поведение upstream.
 - Служба LocalSystem, startup auto, restart 5 секунд, ProgramData защищён ACL в MSI и в самом service host (SYSTEM и Administrators). Ошибка после bind/restart поднимается до service host и приводит к ненулевому завершению для SCM recovery. Нормальная остановка закрывает listener/clients/pools.
 - Файлы пользователя в ProgramData сохраняются при uninstall и upgrade. Полная очистка — отдельная команда администратора из README. MSI firewall управляет выбранным при установке PROXYPORT; после изменения JSON порта администратор меняет существующее правило.
-- Версия service-пакета/EXE 1.11.3, неизменяемый UpgradeCode E83E6106-BDC7-47E2-9655-4249DDD7E664. Версия GUI upstream остаётся 1.11.2. Подпись кода не включена: сертификат не предоставлен.
+- Версия service-пакета/EXE 1.11.4, неизменяемый UpgradeCode E83E6106-BDC7-47E2-9655-4249DDD7E664. Версия GUI upstream 1.11.4. Подпись кода не включена: сертификат не предоставлен.
 
 ## Первичные справочники
 

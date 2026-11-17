@@ -14,7 +14,7 @@ WXS = {'w': 'http://wixtoolset.org/schemas/v4/wxs',
 def test_wix_service_firewall_and_uninstall_contract():
     root = ET.parse(ROOT / 'packaging/msi/Package.wxs').getroot()
     package = root.find('w:Package', WXS)
-    assert package.get('Version') == '1.11.3'
+    assert package.get('Version') == '1.11.4'
     assert package.get('Codepage') == '1251'  # Cyrillic firewall display names.
     assert package.get('UpgradeCode') == 'E83E6106-BDC7-47E2-9655-4249DDD7E664'
     folder = root.find(".//w:StandardDirectory[@Id='ProgramFiles64Folder']/"
@@ -103,4 +103,4 @@ def test_license_is_original_and_version_consistent():
     assert 'MIT License' in license_text
     assert 'Copyright (c) 2026 Flowseal' in license_text
     version_text = (ROOT / 'packaging/service_version.txt').read_text()
-    assert re.search(r'filevers=\(1, 11, 3, 0\)', version_text)
+    assert re.search(r'filevers=\(1, 11, 4, 0\)', version_text)
